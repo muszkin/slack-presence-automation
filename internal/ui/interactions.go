@@ -16,9 +16,18 @@ import (
 
 // HandleHomeOpened loads the current state from storage and publishes the
 // home view back to Slack. Called by the Socket Mode dispatcher every time
-// the user opens the app home tab.
+// the user opens the app home tab. Non-owners get a short "private app"
+// notice instead of the management view.
 func (c *Commands) HandleHomeOpened(ctx context.Context, userID string) {
 	if c.views == nil {
+		return
+	}
+	if !c.IsOwner(userID) {
+		c.logger.DebugContext(ctx, "home opened by non-owner, publishing privacy notice",
+			slog.String("user_id", userID))
+		if err := c.views.PublishHomeView(ctx, userID, buildPrivateHomeView()); err != nil {
+			c.logger.WarnContext(ctx, "publish privacy notice", slog.String("user", userID), slog.Any("err", err))
+		}
 		return
 	}
 	if err := c.publishHome(ctx, userID); err != nil {
@@ -26,9 +35,35 @@ func (c *Commands) HandleHomeOpened(ctx context.Context, userID string) {
 	}
 }
 
+func buildPrivateHomeView() slackgo.HomeTabViewRequest {
+	return slackgo.HomeTabViewRequest{
+		Type: slackgo.VTHomeTab,
+		Blocks: slackgo.Blocks{BlockSet: []slackgo.Block{
+			slackgo.NewSectionBlock(
+				slackgo.NewTextBlockObject(slackgo.MarkdownType,
+					"*Private app*\n"+privateAppText, false, false),
+				nil, nil),
+		}},
+	}
+}
+
 // HandleInteraction routes Block Kit interactions and view submissions to
-// the appropriate per-action or per-modal handler.
+// the appropriate per-action or per-modal handler. Non-owner interactions
+// are rejected: block actions silently ignored (they target no-op private
+// home view anyway); view submissions return a visible modal error.
 func (c *Commands) HandleInteraction(ctx context.Context, cb slackgo.InteractionCallback) slackpkg.InteractionResponse {
+	if !c.IsOwner(cb.User.ID) {
+		c.logger.WarnContext(ctx, "rejected interaction from non-owner",
+			slog.String("user_id", cb.User.ID),
+			slog.String("type", string(cb.Type)))
+		if cb.Type == slackgo.InteractionTypeViewSubmission {
+			return slackpkg.InteractionResponse{Errors: map[string]string{
+				firstBlockID(cb): privateAppText,
+			}}
+		}
+		return slackpkg.InteractionResponse{}
+	}
+
 	switch cb.Type {
 	case slackgo.InteractionTypeBlockActions:
 		return c.handleBlockAction(ctx, cb)
@@ -38,6 +73,15 @@ func (c *Commands) HandleInteraction(ctx context.Context, cb slackgo.Interaction
 		c.logger.DebugContext(ctx, "ignored interaction", slog.String("type", string(cb.Type)))
 		return slackpkg.InteractionResponse{}
 	}
+}
+
+// firstBlockID returns any block_id from the submitted view so a modal
+// rejection has a target block to attach the error message to.
+func firstBlockID(cb slackgo.InteractionCallback) string {
+	for blockID := range cb.View.State.Values {
+		return blockID
+	}
+	return "_"
 }
 
 // compile-time check that Commands satisfies the interaction handler shape.

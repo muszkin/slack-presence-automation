@@ -41,7 +41,24 @@ Potrzebny do obsługi slash commandów, App Home i eventów.
 
 Jeśli go nie widzisz, upewnij się że manifest był użyty w całości — user scopes (`users.profile:write`, `users:write`, `dnd:write`, itp.) muszą być w `oauth_config.scopes.user`. Przy ich braku reinstaluj aplikację: **Install App** → **Reinstall to Workspace**.
 
-### 1.5. Signing Secret (opcjonalnie)
+### 1.5. Twój Slack User ID → `SLACK_OWNER_USER_ID`
+
+Aplikacja zainstalowana w workspace staje się *widoczna dla wszystkich* członków workspace'u — każdy mógłby wpisać `/presence` i sterować Twoim statusem. Dlatego serwis wymaga `SLACK_OWNER_USER_ID` i odrzuca komendy/interakcje od innych osób.
+
+Jak zdobyć swój User ID:
+
+1. Slack desktop/web → klikasz swoje zdjęcie w prawym górnym rogu → **Profile**.
+2. W prawym górnym rogu profilu: **...** (More) → **Copy member ID**.
+3. Skopiowany ciąg zaczyna się od `U` (np. `U0123ABCD`). To wartość `SLACK_OWNER_USER_ID` w `.env`.
+
+Alternatywnie: w Slacku w dowolnym channelu napisz `/apps` lub kliknij swoje zdjęcie → **Profile** — URL profilu zawiera ID po `/team/`.
+
+Skutek:
+- inni członkowie workspace'u widzą slash command `/presence` ale dostają ephemeral notę "This presence app is private to its owner"
+- otwarcie App Home przez nie-ownera renderuje krótki komunikat o prywatności
+- submity modali od nie-ownerów są odrzucane
+
+### 1.6. Signing Secret (opcjonalnie)
 
 Socket Mode nie wymaga walidacji signatur HTTP, więc `SLACK_SIGNING_SECRET` nie jest używany w tej aplikacji. Pomijamy.
 

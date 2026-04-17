@@ -70,7 +70,7 @@ All migrations live in `internal/storage/migrations/` and are applied at service
 
 ## Deployment
 
-CI (`.github/workflows/docker.yml`) builds a multi-arch (amd64 + arm64) image on every push to `main` and publishes it to `ghcr.io/muszkin/slack-presence-automation`. Pin a specific tag in `docker-compose.yml` for production.
+CI (`.github/workflows/docker.yml`) builds an `linux/amd64` image on every push to `main` and publishes it to `ghcr.io/muszkin/slack-presence-automation`. Pin a specific tag in `docker-compose.yml` for production.
 
 ## License
 

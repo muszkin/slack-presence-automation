@@ -17,6 +17,7 @@ const (
 	EnvSlackAppToken     = "SLACK_APP_TOKEN"
 	EnvSlackBotToken     = "SLACK_BOT_TOKEN"
 	EnvSlackUserToken    = "SLACK_USER_TOKEN"
+	EnvSlackOwnerUserID  = "SLACK_OWNER_USER_ID"
 	EnvGoogleCredentials = "GOOGLE_CALENDAR_CREDENTIALS_JSON"
 	EnvGoogleCalendarID  = "GOOGLE_CALENDAR_ID"
 	EnvTickInterval      = "TICK_INTERVAL"
@@ -36,6 +37,7 @@ type Config struct {
 	SlackAppToken         string
 	SlackBotToken         string
 	SlackUserToken        string
+	SlackOwnerUserID      string
 	GoogleCredentialsJSON string
 	GoogleCalendarID      string
 	TickInterval          time.Duration
@@ -62,6 +64,11 @@ func Load() (*Config, error) {
 	userToken := os.Getenv(EnvSlackUserToken)
 	if !strings.HasPrefix(userToken, "xoxp-") {
 		violations = append(violations, fmt.Sprintf("%s must be set and start with 'xoxp-' (Slack user token for profile status/presence/DND updates)", EnvSlackUserToken))
+	}
+
+	ownerID := strings.TrimSpace(os.Getenv(EnvSlackOwnerUserID))
+	if !strings.HasPrefix(ownerID, "U") || len(ownerID) < 9 {
+		violations = append(violations, fmt.Sprintf("%s must be set to your Slack user ID (starts with 'U', e.g. 'U0123ABCD') — gates slash commands, App Home and modals so workspace members other than the owner cannot drive the service", EnvSlackOwnerUserID))
 	}
 
 	credentials := os.Getenv(EnvGoogleCredentials)
@@ -97,6 +104,7 @@ func Load() (*Config, error) {
 		SlackAppToken:         appToken,
 		SlackBotToken:         botToken,
 		SlackUserToken:        userToken,
+		SlackOwnerUserID:      ownerID,
 		GoogleCredentialsJSON: credentials,
 		GoogleCalendarID:      calendarID,
 		TickInterval:          tickInterval,

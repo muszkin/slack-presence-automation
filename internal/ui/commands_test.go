@@ -85,11 +85,33 @@ func (f *fakeStore) DeleteMeetingPattern(_ context.Context, id int64) (int64, er
 	return f.patternDeleteRows, f.patternDeleteErr
 }
 
+const testOwnerID = "U_OWNER"
+
 func newCommands(t *testing.T, store ui.Store) (*ui.Commands, chan struct{}) {
 	t.Helper()
 	trigger := make(chan struct{}, 1)
-	cmd := ui.NewCommands(store, nil, trigger, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	cmd := ui.NewCommands(store, nil, testOwnerID, trigger, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	return cmd, trigger
+}
+
+func TestHandleRejectsSlashCommandFromNonOwner(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeStore{}
+	cmd, trigger := newCommands(t, store)
+
+	resp := cmd.Handle(t.Context(), slackpkg.SlashCommand{UserID: "U_OTHER", Text: "focus 1h"})
+	if !strings.Contains(resp.Text, "private to its owner") {
+		t.Errorf("response = %q, want privacy notice", resp.Text)
+	}
+	if len(store.inserted) != 0 {
+		t.Errorf("non-owner must not be able to insert overrides, got %d", len(store.inserted))
+	}
+	select {
+	case <-trigger:
+		t.Error("trigger must not fire for non-owner slash command")
+	default:
+	}
 }
 
 func TestHandleHelpAndEmptyReturnUsageOrStatus(t *testing.T) {
@@ -100,11 +122,11 @@ func TestHandleHelpAndEmptyReturnUsageOrStatus(t *testing.T) {
 	}
 	cmd, _ := newCommands(t, store)
 
-	if resp := cmd.Handle(t.Context(), slackpkg.SlashCommand{Text: "help"}); !strings.Contains(resp.Text, "Usage:") {
+	if resp := cmd.Handle(t.Context(), slackpkg.SlashCommand{UserID: testOwnerID, Text: "help"}); !strings.Contains(resp.Text, "Usage:") {
 		t.Errorf("help response = %q", resp.Text)
 	}
 
-	if resp := cmd.Handle(t.Context(), slackpkg.SlashCommand{Text: ""}); !strings.Contains(resp.Text, "Applied:") {
+	if resp := cmd.Handle(t.Context(), slackpkg.SlashCommand{UserID: testOwnerID, Text: ""}); !strings.Contains(resp.Text, "Applied:") {
 		t.Errorf("empty subcommand should show status, got %q", resp.Text)
 	}
 }
@@ -115,7 +137,7 @@ func TestHandleFocusInsertsOverrideAndFiresTrigger(t *testing.T) {
 	store := &fakeStore{}
 	cmd, trigger := newCommands(t, store)
 
-	resp := cmd.Handle(t.Context(), slackpkg.SlashCommand{Text: "focus 45m"})
+	resp := cmd.Handle(t.Context(), slackpkg.SlashCommand{UserID: testOwnerID, Text: "focus 45m"})
 	if !strings.Contains(resp.Text, "Override active") {
 		t.Errorf("response = %q", resp.Text)
 	}
@@ -147,7 +169,7 @@ func TestHandleAwayStoresEmptyEmojiAndText(t *testing.T) {
 	store := &fakeStore{}
 	cmd, _ := newCommands(t, store)
 
-	resp := cmd.Handle(t.Context(), slackpkg.SlashCommand{Text: "away 2h"})
+	resp := cmd.Handle(t.Context(), slackpkg.SlashCommand{UserID: testOwnerID, Text: "away 2h"})
 	if !strings.Contains(resp.Text, "Override active") {
 		t.Errorf("response = %q", resp.Text)
 	}
@@ -172,7 +194,7 @@ func TestHandleFocusRejectsInvalidDuration(t *testing.T) {
 	store := &fakeStore{}
 	cmd, trigger := newCommands(t, store)
 
-	resp := cmd.Handle(t.Context(), slackpkg.SlashCommand{Text: "focus forever"})
+	resp := cmd.Handle(t.Context(), slackpkg.SlashCommand{UserID: testOwnerID, Text: "focus forever"})
 	if !strings.Contains(resp.Text, "not valid") {
 		t.Errorf("response = %q", resp.Text)
 	}
@@ -192,7 +214,7 @@ func TestHandleFocusRejectsDurationBelowMinimum(t *testing.T) {
 	store := &fakeStore{}
 	cmd, _ := newCommands(t, store)
 
-	resp := cmd.Handle(t.Context(), slackpkg.SlashCommand{Text: "focus 30s"})
+	resp := cmd.Handle(t.Context(), slackpkg.SlashCommand{UserID: testOwnerID, Text: "focus 30s"})
 	if !strings.Contains(resp.Text, "at least 1m") {
 		t.Errorf("response = %q", resp.Text)
 	}
@@ -204,7 +226,7 @@ func TestHandleFocusRejectsDurationAboveMaximum(t *testing.T) {
 	store := &fakeStore{}
 	cmd, _ := newCommands(t, store)
 
-	resp := cmd.Handle(t.Context(), slackpkg.SlashCommand{Text: "focus 48h"})
+	resp := cmd.Handle(t.Context(), slackpkg.SlashCommand{UserID: testOwnerID, Text: "focus 48h"})
 	if !strings.Contains(resp.Text, "at most 24h") {
 		t.Errorf("response = %q", resp.Text)
 	}
@@ -216,7 +238,7 @@ func TestHandleClearFiresTrigger(t *testing.T) {
 	store := &fakeStore{cleared: 3}
 	cmd, trigger := newCommands(t, store)
 
-	resp := cmd.Handle(t.Context(), slackpkg.SlashCommand{Text: "clear"})
+	resp := cmd.Handle(t.Context(), slackpkg.SlashCommand{UserID: testOwnerID, Text: "clear"})
 	if !strings.Contains(resp.Text, "Cleared 3") {
 		t.Errorf("response = %q", resp.Text)
 	}
@@ -233,7 +255,7 @@ func TestHandleUnknownSubcommandShowsUsage(t *testing.T) {
 	store := &fakeStore{}
 	cmd, _ := newCommands(t, store)
 
-	resp := cmd.Handle(t.Context(), slackpkg.SlashCommand{Text: "whatever"})
+	resp := cmd.Handle(t.Context(), slackpkg.SlashCommand{UserID: testOwnerID, Text: "whatever"})
 	if !strings.Contains(resp.Text, "Unknown subcommand") || !strings.Contains(resp.Text, "Usage:") {
 		t.Errorf("response = %q", resp.Text)
 	}
@@ -245,7 +267,7 @@ func TestHandlePatternAddInsertsAndFiresTrigger(t *testing.T) {
 	store := &fakeStore{}
 	cmd, trigger := newCommands(t, store)
 
-	resp := cmd.Handle(t.Context(), slackpkg.SlashCommand{Text: "pattern add away :hamburger: Lunch break"})
+	resp := cmd.Handle(t.Context(), slackpkg.SlashCommand{UserID: testOwnerID, Text: "pattern add away :hamburger: Lunch break"})
 	if !strings.Contains(resp.Text, "Added pattern") {
 		t.Errorf("response = %q", resp.Text)
 	}
@@ -269,7 +291,7 @@ func TestHandlePatternAddAcceptsDashAsEmptyEmoji(t *testing.T) {
 	store := &fakeStore{}
 	cmd, _ := newCommands(t, store)
 
-	_ = cmd.Handle(t.Context(), slackpkg.SlashCommand{Text: "pattern add away - Lunch"})
+	_ = cmd.Handle(t.Context(), slackpkg.SlashCommand{UserID: testOwnerID, Text: "pattern add away - Lunch"})
 	if len(store.patternInserted) != 1 {
 		t.Fatalf("pattern inserts = %d, want 1", len(store.patternInserted))
 	}
@@ -284,7 +306,7 @@ func TestHandlePatternAddRejectsBadPresence(t *testing.T) {
 	store := &fakeStore{}
 	cmd, _ := newCommands(t, store)
 
-	resp := cmd.Handle(t.Context(), slackpkg.SlashCommand{Text: "pattern add busy :dart: Focus"})
+	resp := cmd.Handle(t.Context(), slackpkg.SlashCommand{UserID: testOwnerID, Text: "pattern add busy :dart: Focus"})
 	if !strings.Contains(resp.Text, "Invalid presence") {
 		t.Errorf("response = %q", resp.Text)
 	}
@@ -299,7 +321,7 @@ func TestHandlePatternAddRequiresThreeArgs(t *testing.T) {
 	store := &fakeStore{}
 	cmd, _ := newCommands(t, store)
 
-	resp := cmd.Handle(t.Context(), slackpkg.SlashCommand{Text: "pattern add away"})
+	resp := cmd.Handle(t.Context(), slackpkg.SlashCommand{UserID: testOwnerID, Text: "pattern add away"})
 	if !strings.Contains(resp.Text, "Usage:") {
 		t.Errorf("response = %q", resp.Text)
 	}
@@ -316,7 +338,7 @@ func TestHandlePatternListShowsPatterns(t *testing.T) {
 	}
 	cmd, _ := newCommands(t, store)
 
-	resp := cmd.Handle(t.Context(), slackpkg.SlashCommand{Text: "pattern list"})
+	resp := cmd.Handle(t.Context(), slackpkg.SlashCommand{UserID: testOwnerID, Text: "pattern list"})
 	if !strings.Contains(resp.Text, "Lunch") || !strings.Contains(resp.Text, "1:1") {
 		t.Errorf("list response missing patterns: %q", resp.Text)
 	}
@@ -328,7 +350,7 @@ func TestHandlePatternDeleteReportsWhenNotFound(t *testing.T) {
 	store := &fakeStore{patternDeleteRows: 0}
 	cmd, _ := newCommands(t, store)
 
-	resp := cmd.Handle(t.Context(), slackpkg.SlashCommand{Text: "pattern delete 42"})
+	resp := cmd.Handle(t.Context(), slackpkg.SlashCommand{UserID: testOwnerID, Text: "pattern delete 42"})
 	if !strings.Contains(resp.Text, "No pattern with id=42") {
 		t.Errorf("response = %q", resp.Text)
 	}
@@ -340,7 +362,7 @@ func TestHandlePatternDeleteRejectsNonNumericID(t *testing.T) {
 	store := &fakeStore{}
 	cmd, _ := newCommands(t, store)
 
-	resp := cmd.Handle(t.Context(), slackpkg.SlashCommand{Text: "pattern delete abc"})
+	resp := cmd.Handle(t.Context(), slackpkg.SlashCommand{UserID: testOwnerID, Text: "pattern delete abc"})
 	if !strings.Contains(resp.Text, "not a valid pattern id") {
 		t.Errorf("response = %q", resp.Text)
 	}

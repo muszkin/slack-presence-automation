@@ -13,6 +13,7 @@ func setValidEnv(t *testing.T) {
 	t.Setenv(config.EnvSlackAppToken, "xapp-1-ABCDEF")
 	t.Setenv(config.EnvSlackBotToken, "xoxb-1-ABCDEF")
 	t.Setenv(config.EnvSlackUserToken, "xoxp-1-ABCDEF")
+	t.Setenv(config.EnvSlackOwnerUserID, "U0123ABCD")
 	t.Setenv(config.EnvGoogleCredentials, `{"type":"service_account"}`)
 	t.Setenv(config.EnvDatabasePath, "/tmp/presence.db")
 }
@@ -39,6 +40,7 @@ func TestLoadReportsMissingRequiredVars(t *testing.T) {
 	t.Setenv(config.EnvSlackAppToken, "")
 	t.Setenv(config.EnvSlackBotToken, "")
 	t.Setenv(config.EnvSlackUserToken, "")
+	t.Setenv(config.EnvSlackOwnerUserID, "")
 	t.Setenv(config.EnvGoogleCredentials, "")
 	t.Setenv(config.EnvDatabasePath, "")
 
@@ -51,6 +53,7 @@ func TestLoadReportsMissingRequiredVars(t *testing.T) {
 		config.EnvSlackAppToken,
 		config.EnvSlackBotToken,
 		config.EnvSlackUserToken,
+		config.EnvSlackOwnerUserID,
 		config.EnvGoogleCredentials,
 		config.EnvDatabasePath,
 	} {

@@ -70,7 +70,7 @@ func run() error {
 	trigger := make(chan struct{}, 1)
 	socket := slackpkg.NewSocketRunner(cfg.SlackAppToken, cfg.SlackBotToken, logger)
 	views := slackpkg.NewViewsClient(socket.Client())
-	commands := ui.NewCommands(store, views, trigger, logger)
+	commands := ui.NewCommands(store, views, cfg.SlackOwnerUserID, trigger, logger)
 
 	socket.SetSlashHandler(commands.Handle)
 	socket.SetHomeOpenedHandler(commands.HandleHomeOpened)

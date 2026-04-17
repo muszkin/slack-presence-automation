@@ -37,8 +37,78 @@ func (f *fakeViews) OpenModal(_ context.Context, triggerID string, view slackgo.
 func newCommandsWithViews(t *testing.T, store ui.Store, views ui.ViewsClient) (*ui.Commands, chan struct{}) {
 	t.Helper()
 	trigger := make(chan struct{}, 1)
-	cmd := ui.NewCommands(store, views, trigger, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	cmd := ui.NewCommands(store, views, testOwnerID, trigger, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	return cmd, trigger
+}
+
+func TestHandleHomeOpenedForNonOwnerPublishesPrivacyNotice(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeStore{applied: storage.GetAppliedStateRow{Presence: "auto", Source: "default"}}
+	views := &fakeViews{}
+	cmd, _ := newCommandsWithViews(t, store, views)
+
+	cmd.HandleHomeOpened(t.Context(), "U_STRANGER")
+
+	if len(views.publishedTo) != 1 || views.publishedTo[0] != "U_STRANGER" {
+		t.Errorf("publishedTo = %v, want [U_STRANGER]", views.publishedTo)
+	}
+	if n := len(views.published[0].Blocks.BlockSet); n != 1 {
+		t.Errorf("privacy view has %d blocks, want 1", n)
+	}
+}
+
+func TestHandleInteractionRejectsBlockActionFromNonOwner(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeStore{}
+	views := &fakeViews{}
+	cmd, _ := newCommandsWithViews(t, store, views)
+
+	cb := slackgo.InteractionCallback{
+		Type: slackgo.InteractionTypeBlockActions,
+		User: slackgo.User{ID: "U_STRANGER"},
+		ActionCallback: slackgo.ActionCallbacks{
+			BlockActions: []*slackgo.BlockAction{
+				{ActionID: ui.ActionDeleteRule, Value: "1"},
+			},
+		},
+	}
+	resp := cmd.HandleInteraction(t.Context(), cb)
+
+	if !resp.Empty() {
+		t.Errorf("block actions from non-owner should silently no-op, got %+v", resp)
+	}
+	if len(store.ruleDeleteIDs) != 0 {
+		t.Error("non-owner must not be able to delete rules")
+	}
+}
+
+func TestHandleInteractionRejectsViewSubmissionFromNonOwnerWithError(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeStore{}
+	views := &fakeViews{}
+	cmd, _ := newCommandsWithViews(t, store, views)
+
+	cb := slackgo.InteractionCallback{
+		Type: slackgo.InteractionTypeViewSubmission,
+		User: slackgo.User{ID: "U_STRANGER"},
+		View: slackgo.View{
+			CallbackID: ui.CallbackAddRule,
+			State: &slackgo.ViewState{Values: map[string]map[string]slackgo.BlockAction{
+				"days": {"days": {SelectedOptions: []slackgo.OptionBlockObject{{Value: "mon"}}}},
+			}},
+		},
+	}
+	resp := cmd.HandleInteraction(t.Context(), cb)
+
+	if resp.Empty() {
+		t.Fatal("expected validation-error response so Slack keeps the modal open")
+	}
+	if len(store.ruleInserted) != 0 {
+		t.Error("non-owner must not insert a rule")
+	}
 }
 
 func TestHandleHomeOpenedPublishesCurrentState(t *testing.T) {
@@ -85,7 +155,7 @@ func TestHandleInteractionAddRuleOpensModal(t *testing.T) {
 	cb := slackgo.InteractionCallback{
 		Type:      slackgo.InteractionTypeBlockActions,
 		TriggerID: "trig-123",
-		User:      slackgo.User{ID: "U1"},
+		User:      slackgo.User{ID: testOwnerID},
 		ActionCallback: slackgo.ActionCallbacks{
 			BlockActions: []*slackgo.BlockAction{
 				{ActionID: ui.ActionAddRule},
@@ -119,7 +189,7 @@ func TestHandleInteractionDeleteRuleDeletesAndRepublishes(t *testing.T) {
 
 	cb := slackgo.InteractionCallback{
 		Type: slackgo.InteractionTypeBlockActions,
-		User: slackgo.User{ID: "U1"},
+		User: slackgo.User{ID: testOwnerID},
 		ActionCallback: slackgo.ActionCallbacks{
 			BlockActions: []*slackgo.BlockAction{
 				{ActionID: ui.ActionDeleteRule, Value: "7"},
@@ -150,7 +220,7 @@ func TestHandleInteractionClearOverridesCallsStore(t *testing.T) {
 
 	cb := slackgo.InteractionCallback{
 		Type: slackgo.InteractionTypeBlockActions,
-		User: slackgo.User{ID: "U1"},
+		User: slackgo.User{ID: testOwnerID},
 		ActionCallback: slackgo.ActionCallbacks{
 			BlockActions: []*slackgo.BlockAction{
 				{ActionID: ui.ActionClearOverrides},
@@ -178,7 +248,7 @@ func TestHandleViewSubmissionAddRuleInsertsAndRepublishes(t *testing.T) {
 
 	cb := slackgo.InteractionCallback{
 		Type: slackgo.InteractionTypeViewSubmission,
-		User: slackgo.User{ID: "U1"},
+		User: slackgo.User{ID: testOwnerID},
 		View: slackgo.View{
 			CallbackID: ui.CallbackAddRule,
 			State: &slackgo.ViewState{Values: map[string]map[string]slackgo.BlockAction{
@@ -235,7 +305,7 @@ func TestHandleViewSubmissionAddRuleValidatesEndAfterStart(t *testing.T) {
 
 	cb := slackgo.InteractionCallback{
 		Type: slackgo.InteractionTypeViewSubmission,
-		User: slackgo.User{ID: "U1"},
+		User: slackgo.User{ID: testOwnerID},
 		View: slackgo.View{
 			CallbackID: ui.CallbackAddRule,
 			State: &slackgo.ViewState{Values: map[string]map[string]slackgo.BlockAction{
@@ -268,7 +338,7 @@ func TestHandleViewSubmissionAddRuleRejectsMalformedTime(t *testing.T) {
 
 	cb := slackgo.InteractionCallback{
 		Type: slackgo.InteractionTypeViewSubmission,
-		User: slackgo.User{ID: "U1"},
+		User: slackgo.User{ID: testOwnerID},
 		View: slackgo.View{
 			CallbackID: ui.CallbackAddRule,
 			State: &slackgo.ViewState{Values: map[string]map[string]slackgo.BlockAction{
@@ -298,7 +368,7 @@ func TestHandleViewSubmissionAddRuleRequiresDays(t *testing.T) {
 
 	cb := slackgo.InteractionCallback{
 		Type: slackgo.InteractionTypeViewSubmission,
-		User: slackgo.User{ID: "U1"},
+		User: slackgo.User{ID: testOwnerID},
 		View: slackgo.View{
 			CallbackID: ui.CallbackAddRule,
 			State: &slackgo.ViewState{Values: map[string]map[string]slackgo.BlockAction{
@@ -325,7 +395,7 @@ func TestHandleViewSubmissionAddPatternInserts(t *testing.T) {
 
 	cb := slackgo.InteractionCallback{
 		Type: slackgo.InteractionTypeViewSubmission,
-		User: slackgo.User{ID: "U1"},
+		User: slackgo.User{ID: testOwnerID},
 		View: slackgo.View{
 			CallbackID: ui.CallbackAddPattern,
 			State: &slackgo.ViewState{Values: map[string]map[string]slackgo.BlockAction{
@@ -357,7 +427,7 @@ func TestHandleViewSubmissionAddPatternRequiresText(t *testing.T) {
 
 	cb := slackgo.InteractionCallback{
 		Type: slackgo.InteractionTypeViewSubmission,
-		User: slackgo.User{ID: "U1"},
+		User: slackgo.User{ID: testOwnerID},
 		View: slackgo.View{
 			CallbackID: ui.CallbackAddPattern,
 			State: &slackgo.ViewState{Values: map[string]map[string]slackgo.BlockAction{
@@ -385,7 +455,7 @@ func TestHandleViewSubmissionPublishErrorDoesNotCrash(t *testing.T) {
 
 	cb := slackgo.InteractionCallback{
 		Type: slackgo.InteractionTypeViewSubmission,
-		User: slackgo.User{ID: "U1"},
+		User: slackgo.User{ID: testOwnerID},
 		View: slackgo.View{
 			CallbackID: ui.CallbackAddPattern,
 			State: &slackgo.ViewState{Values: map[string]map[string]slackgo.BlockAction{

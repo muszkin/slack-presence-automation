@@ -43,23 +43,51 @@ type ViewsClient interface {
 // Commands handles the `/presence` slash command, App Home events, and
 // interactive callbacks. Each handler that mutates state fires the
 // reconcile trigger so the tick loop picks up the change immediately.
+//
+// The service is single-user by design: the xoxp- user token drives exactly
+// one Slack profile. To stop other workspace members from hijacking that
+// profile through the slash command or App Home, every handler checks the
+// incoming user ID against ownerUserID and rejects mismatches.
 type Commands struct {
-	store   Store
-	views   ViewsClient
-	trigger chan<- struct{}
-	logger  *slog.Logger
+	store       Store
+	views       ViewsClient
+	trigger     chan<- struct{}
+	ownerUserID string
+	logger      *slog.Logger
 }
 
-// NewCommands builds a Commands handler. trigger must be a buffered channel
-// of size 1; nonblocking sends into a full channel are fine because the
-// receiver always re-reads the latest state. The views argument may be nil
-// when App Home / interactive features are disabled (e.g. in slash-only tests).
-func NewCommands(store Store, views ViewsClient, trigger chan<- struct{}, logger *slog.Logger) *Commands {
-	return &Commands{store: store, views: views, trigger: trigger, logger: logger}
+// NewCommands builds a Commands handler. ownerUserID is the Slack user ID
+// that owns the installed xoxp- token and is therefore the only one allowed
+// to interact with the service — everyone else gets an explanatory "private
+// app" message (or silence for home events). trigger must be a buffered
+// channel of size 1; the views argument may be nil when App Home / modals
+// are disabled in tests.
+func NewCommands(store Store, views ViewsClient, ownerUserID string, trigger chan<- struct{}, logger *slog.Logger) *Commands {
+	return &Commands{
+		store:       store,
+		views:       views,
+		trigger:     trigger,
+		ownerUserID: ownerUserID,
+		logger:      logger,
+	}
 }
+
+// IsOwner reports whether the given Slack user ID is the single authorised
+// operator for this service.
+func (c *Commands) IsOwner(userID string) bool {
+	return userID != "" && userID == c.ownerUserID
+}
+
+const privateAppText = "This presence app is private to its owner. If you need presence automation for yourself, deploy your own instance."
 
 // Handle routes a slash command to the matching subcommand.
 func (c *Commands) Handle(ctx context.Context, cmd slackpkg.SlashCommand) slackpkg.SlashResponse {
+	if !c.IsOwner(cmd.UserID) {
+		c.logger.WarnContext(ctx, "rejected slash command from non-owner",
+			slog.String("user_id", cmd.UserID), slog.String("text", cmd.Text))
+		return slackpkg.SlashResponse{Text: privateAppText}
+	}
+
 	fields := strings.Fields(cmd.Text)
 	var sub string
 	var args []string
