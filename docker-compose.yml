@@ -1,0 +1,16 @@
+services:
+  presence:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: presence:local
+    container_name: presence
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_PATH: /data/presence.db
+    volumes:
+      - presence-data:/data
+
+volumes:
+  presence-data:
