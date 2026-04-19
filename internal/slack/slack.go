@@ -139,16 +139,24 @@ type CommandHandler func(ctx context.Context, cmd SlashCommand) SlashResponse
 // handler is expected to call views.publish to render the current home view.
 type HomeOpenedHandler func(ctx context.Context, userID string)
 
-// InteractionResponse is what an InteractionHandler returns. When Errors
-// is non-empty AND the interaction was a view submission, Slack keeps the
-// modal open and displays each message next to the corresponding block_id.
-// For all other interactions (block_actions) the response is ignored.
+// InteractionResponse is what an InteractionHandler returns. The response
+// is interpreted based on the originating interaction type:
+//
+//   - View submission: Errors keeps the modal open with per-block messages
+//     attached; a non-empty Errors map maps block_id → message.
+//   - Block suggestion (external_select populate): Options is the filtered
+//     option list Slack should render in the dropdown.
+//   - Block action: neither field is used; return value is ignored.
 type InteractionResponse struct {
-	Errors map[string]string
+	Errors  map[string]string
+	Options []slackgo.OptionBlockObject
 }
 
-// Empty reports whether the response carries no validation errors.
-func (r InteractionResponse) Empty() bool { return len(r.Errors) == 0 }
+// Empty reports whether the response carries no data (no validation errors
+// and no suggestion options).
+func (r InteractionResponse) Empty() bool {
+	return len(r.Errors) == 0 && len(r.Options) == 0
+}
 
 // InteractionHandler is invoked for Block Kit interactions and view
 // submissions. The raw InteractionCallback exposes the trigger_id (needed
@@ -295,7 +303,8 @@ func (r *SocketRunner) dispatchInteraction(ctx context.Context, evt socketmode.E
 		return
 	}
 	resp := r.interactionHandler(ctx, callback)
-	if !resp.Empty() && callback.Type == slackgo.InteractionTypeViewSubmission {
+	switch {
+	case callback.Type == slackgo.InteractionTypeViewSubmission && len(resp.Errors) > 0:
 		payload := map[string]any{
 			"response_action": "errors",
 			"errors":          resp.Errors,
@@ -303,9 +312,14 @@ func (r *SocketRunner) dispatchInteraction(ctx context.Context, evt socketmode.E
 		if err := r.client.Ack(*evt.Request, payload); err != nil {
 			r.logger.WarnContext(ctx, "ack view submission with errors", slog.Any("err", err))
 		}
-		return
+	case callback.Type == slackgo.InteractionTypeBlockSuggestion:
+		payload := map[string]any{"options": resp.Options}
+		if err := r.client.Ack(*evt.Request, payload); err != nil {
+			r.logger.WarnContext(ctx, "ack block suggestion", slog.Any("err", err))
+		}
+	default:
+		r.ackIfNeeded(ctx, evt)
 	}
-	r.ackIfNeeded(ctx, evt)
 }
 
 func (r *SocketRunner) ackIfNeeded(ctx context.Context, evt socketmode.Event) {

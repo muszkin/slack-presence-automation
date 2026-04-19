@@ -201,9 +201,7 @@ func BuildAddRuleModal() slackgo.ModalViewRequest {
 		slackgo.NewTextBlockObject(slackgo.PlainTextType, "Choose presence", false, false),
 		"presence", presenceOptions()...)
 
-	emojiInput := slackgo.NewPlainTextInputBlockElement(
-		slackgo.NewTextBlockObject(slackgo.PlainTextType, ":brain:", false, false),
-		"emoji")
+	emojiInput := emojiExternalSelect("emoji")
 	textInput := slackgo.NewPlainTextInputBlockElement(
 		slackgo.NewTextBlockObject(slackgo.PlainTextType, "deep work", false, false),
 		"text")
@@ -244,9 +242,7 @@ func BuildAddPatternModal() slackgo.ModalViewRequest {
 		slackgo.OptTypeStatic,
 		slackgo.NewTextBlockObject(slackgo.PlainTextType, "Choose presence", false, false),
 		"presence", presenceOptions()...)
-	emojiInput := slackgo.NewPlainTextInputBlockElement(
-		slackgo.NewTextBlockObject(slackgo.PlainTextType, ":hamburger:", false, false),
-		"emoji")
+	emojiInput := emojiExternalSelect("emoji")
 	patternInput := slackgo.NewPlainTextInputBlockElement(
 		slackgo.NewTextBlockObject(slackgo.PlainTextType, "Lunch", false, false),
 		"title_pattern")
@@ -289,6 +285,21 @@ func inputBlock(blockID, label, hint string, element slackgo.BlockElement, optio
 	}
 	ib.Optional = optional
 	return ib
+}
+
+// emojiExternalSelect builds an external_select backed by the block_suggestion
+// handler in interactions.go. Slack fetches options live as the user types,
+// so the built-in Unicode emoji catalogue is searchable without baking all
+// ~1800 shortcodes into the view.
+func emojiExternalSelect(actionID string) *slackgo.SelectBlockElement {
+	el := slackgo.NewOptionsSelectBlockElement(
+		slackgo.OptTypeExternal,
+		slackgo.NewTextBlockObject(slackgo.PlainTextType, "Type to search, e.g. :brain:", false, false),
+		actionID,
+	)
+	one := 1
+	el.MinQueryLength = &one
+	return el
 }
 
 func presenceOptions() []*slackgo.OptionBlockObject {

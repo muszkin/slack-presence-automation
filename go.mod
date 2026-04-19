@@ -3,6 +3,7 @@ module github.com/muszkin/slack-presence-automation
 go 1.25.0
 
 require (
+	github.com/kyokomi/emoji/v2 v2.2.13
 	github.com/pressly/goose/v3 v3.27.0
 	github.com/slack-go/slack v0.22.0
 	golang.org/x/oauth2 v0.36.0

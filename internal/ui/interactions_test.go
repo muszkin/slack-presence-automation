@@ -256,7 +256,7 @@ func TestHandleViewSubmissionAddRuleInsertsAndRepublishes(t *testing.T) {
 				"start_time": {"start_time": {Value: "09:00"}},
 				"end_time":   {"end_time": {Value: "10:30"}},
 				"presence":   {"presence": {SelectedOption: slackgo.OptionBlockObject{Value: "dnd"}}},
-				"emoji":      {"emoji": {Value: ":brain:"}},
+				"emoji":      {"emoji": {SelectedOption: slackgo.OptionBlockObject{Value: ":brain:"}}},
 				"text":       {"text": {Value: "deep work"}},
 				"priority":   {"priority": {Value: "5"}},
 			}},
@@ -401,7 +401,7 @@ func TestHandleViewSubmissionAddPatternInserts(t *testing.T) {
 			State: &slackgo.ViewState{Values: map[string]map[string]slackgo.BlockAction{
 				"title_pattern": {"title_pattern": {Value: "Lunch"}},
 				"presence":      {"presence": {SelectedOption: slackgo.OptionBlockObject{Value: "away"}}},
-				"emoji":         {"emoji": {Value: ":hamburger:"}},
+				"emoji":         {"emoji": {SelectedOption: slackgo.OptionBlockObject{Value: ":hamburger:"}}},
 			}},
 		},
 	}
@@ -415,6 +415,51 @@ func TestHandleViewSubmissionAddPatternInserts(t *testing.T) {
 	}
 	if store.patternInserted[0].TitlePattern != "Lunch" {
 		t.Errorf("pattern = %q", store.patternInserted[0].TitlePattern)
+	}
+	if store.patternInserted[0].StatusEmoji != ":hamburger:" {
+		t.Errorf("emoji persisted = %q, want :hamburger: (via external_select)", store.patternInserted[0].StatusEmoji)
+	}
+}
+
+func TestHandleBlockSuggestionReturnsFilteredEmojis(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeStore{}
+	views := &fakeViews{}
+	cmd, _ := newCommandsWithViews(t, store, views)
+
+	cb := slackgo.InteractionCallback{
+		Type:     slackgo.InteractionTypeBlockSuggestion,
+		User:     slackgo.User{ID: testOwnerID},
+		ActionID: "emoji",
+		Value:    "brain",
+	}
+	resp := cmd.HandleInteraction(t.Context(), cb)
+	if len(resp.Options) == 0 {
+		t.Fatal("expected at least one suggestion for 'brain'")
+	}
+	first := resp.Options[0].Value
+	if first != ":brain:" {
+		t.Errorf("top suggestion value = %q, want :brain:", first)
+	}
+}
+
+func TestHandleBlockSuggestionUnknownActionIDReturnsEmpty(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeStore{}
+	views := &fakeViews{}
+	cmd, _ := newCommandsWithViews(t, store, views)
+
+	cb := slackgo.InteractionCallback{
+		Type:     slackgo.InteractionTypeBlockSuggestion,
+		User:     slackgo.User{ID: testOwnerID},
+		ActionID: "unknown",
+		Value:    "anything",
+	}
+	resp := cmd.HandleInteraction(t.Context(), cb)
+	if len(resp.Options) != 0 {
+		t.Errorf("unknown action should return zero options, got %d", len(resp.Options))
 	}
 }
 

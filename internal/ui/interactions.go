@@ -69,10 +69,25 @@ func (c *Commands) HandleInteraction(ctx context.Context, cb slackgo.Interaction
 		return c.handleBlockAction(ctx, cb)
 	case slackgo.InteractionTypeViewSubmission:
 		return c.handleViewSubmission(ctx, cb)
+	case slackgo.InteractionTypeBlockSuggestion:
+		return c.handleBlockSuggestion(ctx, cb)
 	default:
 		c.logger.DebugContext(ctx, "ignored interaction", slog.String("type", string(cb.Type)))
 		return slackpkg.InteractionResponse{}
 	}
+}
+
+// handleBlockSuggestion answers external_select populate requests. Today the
+// only populated control is the emoji picker in the add-rule / add-pattern
+// modals; responding with an empty Options slice is a valid "no matches"
+// outcome for unknown action_ids.
+func (c *Commands) handleBlockSuggestion(ctx context.Context, cb slackgo.InteractionCallback) slackpkg.InteractionResponse {
+	if cb.ActionID != "emoji" {
+		c.logger.DebugContext(ctx, "unknown block_suggestion action_id",
+			slog.String("action_id", cb.ActionID))
+		return slackpkg.InteractionResponse{Options: []slackgo.OptionBlockObject{}}
+	}
+	return slackpkg.InteractionResponse{Options: filterEmojis(cb.Value)}
 }
 
 // firstBlockID returns any block_id from the submitted view so a modal
@@ -168,7 +183,7 @@ func (c *Commands) handleAddRuleSubmission(ctx context.Context, cb slackgo.Inter
 		DaysOfWeek:  int64(daysMask),
 		StartMinute: int64(startMin),
 		EndMinute:   int64(endMin),
-		StatusEmoji: readPlainInput(values, "emoji", "emoji"),
+		StatusEmoji: readSelectedValue(values, "emoji", "emoji"),
 		StatusText:  readPlainInput(values, "text", "text"),
 		Presence:    presence,
 		Priority:    priority,
@@ -205,7 +220,7 @@ func (c *Commands) handleAddPatternSubmission(ctx context.Context, cb slackgo.In
 
 	params := storage.InsertMeetingPatternParams{
 		TitlePattern: pattern,
-		StatusEmoji:  readPlainInput(values, "emoji", "emoji"),
+		StatusEmoji:  readSelectedValue(values, "emoji", "emoji"),
 		StatusText:   "",
 		Presence:     presence,
 		Priority:     priority,
@@ -357,6 +372,17 @@ func readPlainInput(values map[string]map[string]slackgo.BlockAction, blockID, a
 		return ""
 	}
 	return strings.TrimSpace(action.Value)
+}
+
+// readSelectedValue returns the value of an external_select/static_select
+// action, or empty when the user left it unselected. Unlike parseSelectedValue
+// this does not signal an error for empty — used for truly optional fields.
+func readSelectedValue(values map[string]map[string]slackgo.BlockAction, blockID, actionID string) string {
+	action, ok := lookupAction(values, blockID, actionID)
+	if !ok {
+		return ""
+	}
+	return action.SelectedOption.Value
 }
 
 func lookupAction(values map[string]map[string]slackgo.BlockAction, blockID, actionID string) (slackgo.BlockAction, bool) {
