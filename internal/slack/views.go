@@ -38,3 +38,15 @@ func (v *ViewsClient) OpenModal(ctx context.Context, triggerID string, view slac
 	}
 	return nil
 }
+
+// ListEmoji calls emoji.list and returns the raw map Slack gives us:
+// custom-shortcode → image URL for uploaded emoji, and "alias:canonical" for
+// aliases. Unicode built-ins are NOT returned by this endpoint — they're
+// rendered client-side from a static Unicode table.
+func (v *ViewsClient) ListEmoji(ctx context.Context) (map[string]string, error) {
+	emoji, err := v.api.GetEmojiContext(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list workspace emoji: %w", err)
+	}
+	return emoji, nil
+}

@@ -34,10 +34,12 @@ type Store interface {
 }
 
 // ViewsClient is the narrow Slack views.* API surface the App Home and
-// modals need: publishing the home tab and opening modals from trigger IDs.
+// modals need: publishing the home tab, opening modals, and listing the
+// workspace's custom emoji for the emoji picker.
 type ViewsClient interface {
 	PublishHomeView(ctx context.Context, userID string, view slackgoviews.HomeTabViewRequest) error
 	OpenModal(ctx context.Context, triggerID string, view slackgoviews.ModalViewRequest) error
+	ListEmoji(ctx context.Context) (map[string]string, error)
 }
 
 // Commands handles the `/presence` slash command, App Home events, and
@@ -53,6 +55,7 @@ type Commands struct {
 	views       ViewsClient
 	trigger     chan<- struct{}
 	ownerUserID string
+	emojiCat    *Catalog
 	logger      *slog.Logger
 }
 
@@ -63,11 +66,16 @@ type Commands struct {
 // channel of size 1; the views argument may be nil when App Home / modals
 // are disabled in tests.
 func NewCommands(store Store, views ViewsClient, ownerUserID string, trigger chan<- struct{}, logger *slog.Logger) *Commands {
+	var lister EmojiLister
+	if views != nil {
+		lister = views
+	}
 	return &Commands{
 		store:       store,
 		views:       views,
 		trigger:     trigger,
 		ownerUserID: ownerUserID,
+		emojiCat:    NewCatalog(lister, DefaultEmojiCatalogTTL, logger),
 		logger:      logger,
 	}
 }

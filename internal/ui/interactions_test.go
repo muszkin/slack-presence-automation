@@ -20,6 +20,10 @@ type fakeViews struct {
 	openTrigs   []string
 	publishErr  error
 	openErr     error
+
+	emoji      map[string]string
+	emojiErr   error
+	emojiCalls int
 }
 
 func (f *fakeViews) PublishHomeView(_ context.Context, userID string, view slackgo.HomeTabViewRequest) error {
@@ -32,6 +36,14 @@ func (f *fakeViews) OpenModal(_ context.Context, triggerID string, view slackgo.
 	f.openTrigs = append(f.openTrigs, triggerID)
 	f.opened = append(f.opened, view)
 	return f.openErr
+}
+
+func (f *fakeViews) ListEmoji(_ context.Context) (map[string]string, error) {
+	f.emojiCalls++
+	if f.emojiErr != nil {
+		return nil, f.emojiErr
+	}
+	return f.emoji, nil
 }
 
 func newCommandsWithViews(t *testing.T, store ui.Store, views ui.ViewsClient) (*ui.Commands, chan struct{}) {

@@ -87,7 +87,7 @@ func (c *Commands) handleBlockSuggestion(ctx context.Context, cb slackgo.Interac
 			slog.String("action_id", cb.ActionID))
 		return slackpkg.InteractionResponse{Options: []slackgo.OptionBlockObject{}}
 	}
-	return slackpkg.InteractionResponse{Options: filterEmojis(cb.Value)}
+	return slackpkg.InteractionResponse{Options: c.emojiCat.Filter(ctx, cb.Value)}
 }
 
 // firstBlockID returns any block_id from the submitted view so a modal

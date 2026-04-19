@@ -1,40 +1,142 @@
 package ui
 
 import (
+	"context"
+	"errors"
+	"io"
+	"log/slog"
 	"strings"
 	"testing"
+	"time"
 )
 
-func TestFilterEmojisEmptyQueryReturnsSomething(t *testing.T) {
+type fakeEmojiLister struct {
+	emoji    map[string]string
+	err      error
+	calls    int
+	failOnce bool
+}
+
+func (f *fakeEmojiLister) ListEmoji(_ context.Context) (map[string]string, error) {
+	f.calls++
+	if f.err != nil {
+		if f.failOnce {
+			f.err = nil
+		}
+		return nil, errors.New("boom")
+	}
+	return f.emoji, nil
+}
+
+func discardLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+func TestCatalogFilterBuiltinOnlyWhenListerNil(t *testing.T) {
 	t.Parallel()
 
-	got := filterEmojis("")
+	cat := NewCatalog(nil, time.Minute, discardLogger())
+	got := cat.Filter(t.Context(), "brain")
 	if len(got) == 0 {
-		t.Fatal("expected some options for empty query so dropdown isn't blank")
+		t.Fatal("expected :brain: to be in built-in catalogue")
+	}
+	if got[0].Value != ":brain:" {
+		t.Errorf("top match = %q, want :brain:", got[0].Value)
+	}
+}
+
+func TestCatalogFilterIncludesCustomEmoji(t *testing.T) {
+	t.Parallel()
+
+	lister := &fakeEmojiLister{emoji: map[string]string{
+		"company-logo": "https://example.com/logo.png",
+		"team-banner":  "https://example.com/banner.png",
+	}}
+	cat := NewCatalog(lister, time.Minute, discardLogger())
+
+	got := cat.Filter(t.Context(), "company")
+	if len(got) == 0 {
+		t.Fatal("expected company-logo match")
+	}
+	found := false
+	for _, o := range got {
+		if o.Value == ":company-logo:" {
+			found = true
+			if strings.Contains(o.Text.Text, " ") {
+				// Custom emoji label must not add a Unicode char prefix since there is none.
+				if strings.HasPrefix(o.Text.Text, " ") {
+					t.Errorf("custom emoji label starts with space: %q", o.Text.Text)
+				}
+			}
+			break
+		}
+	}
+	if !found {
+		t.Errorf("custom emoji not in results: %+v", got)
+	}
+}
+
+func TestCatalogCachesWithinTTL(t *testing.T) {
+	t.Parallel()
+
+	lister := &fakeEmojiLister{emoji: map[string]string{"foo": "https://x"}}
+	cat := NewCatalog(lister, time.Hour, discardLogger())
+
+	cat.Filter(t.Context(), "foo")
+	cat.Filter(t.Context(), "foo")
+	cat.Filter(t.Context(), "brain")
+
+	if lister.calls != 1 {
+		t.Errorf("emoji.list calls = %d, want 1 (TTL must coalesce)", lister.calls)
+	}
+}
+
+func TestCatalogRefreshesAfterTTL(t *testing.T) {
+	t.Parallel()
+
+	lister := &fakeEmojiLister{emoji: map[string]string{"foo": "https://x"}}
+	cat := NewCatalog(lister, time.Millisecond, discardLogger())
+
+	cat.Filter(t.Context(), "foo")
+	time.Sleep(5 * time.Millisecond)
+	cat.Filter(t.Context(), "foo")
+
+	if lister.calls < 2 {
+		t.Errorf("emoji.list calls = %d, want >= 2 after TTL elapsed", lister.calls)
+	}
+}
+
+func TestCatalogSurvivesListerError(t *testing.T) {
+	t.Parallel()
+
+	lister := &fakeEmojiLister{err: errors.New("slack 503")}
+	cat := NewCatalog(lister, time.Hour, discardLogger())
+
+	// Filter must still return built-in matches even if emoji.list failed.
+	got := cat.Filter(t.Context(), "brain")
+	if len(got) == 0 {
+		t.Fatal("expected built-in :brain: even when emoji.list fails")
+	}
+}
+
+func TestCatalogEmptyQueryReturnsSomething(t *testing.T) {
+	t.Parallel()
+
+	cat := NewCatalog(nil, time.Minute, discardLogger())
+	got := cat.Filter(t.Context(), "")
+	if len(got) == 0 {
+		t.Fatal("empty query should still show the first page of the catalogue")
 	}
 	if len(got) > emojiSuggestionLimit {
-		t.Errorf("got %d options, want <= %d", len(got), emojiSuggestionLimit)
+		t.Errorf("len=%d exceeds limit %d", len(got), emojiSuggestionLimit)
 	}
 }
 
-func TestFilterEmojisStripsColonsFromQuery(t *testing.T) {
+func TestCatalogPrefixBeatsSubstring(t *testing.T) {
 	t.Parallel()
 
-	withColons := filterEmojis(":brain")
-	noColons := filterEmojis("brain")
-	if len(withColons) == 0 || len(noColons) == 0 {
-		t.Fatalf("both queries should return options (got %d / %d)", len(withColons), len(noColons))
-	}
-	if withColons[0].Value != noColons[0].Value {
-		t.Errorf("colon-prefixed query should match plain query; top = %q vs %q",
-			withColons[0].Value, noColons[0].Value)
-	}
-}
-
-func TestFilterEmojisPrefixBeatsSubstring(t *testing.T) {
-	t.Parallel()
-
-	got := filterEmojis("bra")
+	cat := NewCatalog(nil, time.Minute, discardLogger())
+	got := cat.Filter(t.Context(), "bra")
 	if len(got) == 0 {
 		t.Fatal("no matches for 'bra'")
 	}
@@ -44,43 +146,11 @@ func TestFilterEmojisPrefixBeatsSubstring(t *testing.T) {
 	}
 }
 
-func TestFilterEmojisCaseInsensitive(t *testing.T) {
+func TestCatalogLimitRespectedEvenForBroadQuery(t *testing.T) {
 	t.Parallel()
 
-	lower := filterEmojis("pizza")
-	upper := filterEmojis("PIZZA")
-	if len(lower) == 0 || len(upper) == 0 {
-		t.Fatalf("both queries should match pizza (got %d / %d)", len(lower), len(upper))
-	}
-	if lower[0].Value != upper[0].Value {
-		t.Errorf("case should not affect ordering: %q vs %q", lower[0].Value, upper[0].Value)
-	}
-}
-
-func TestFilterEmojisLabelContainsCharacterAndShortcode(t *testing.T) {
-	t.Parallel()
-
-	got := filterEmojis("brain")
-	if len(got) == 0 {
-		t.Fatal("no matches")
-	}
-	label := got[0].Text.Text
-	if !strings.Contains(label, ":brain:") {
-		t.Errorf("label = %q, want it to contain :brain: shortcode", label)
-	}
-	// Label starts with the Unicode character; the shortcode follows. The
-	// Unicode character is not ASCII so byte length > shortcode length.
-	if len(label) <= len(":brain:") {
-		t.Errorf("label %q looks like it's missing the emoji character", label)
-	}
-}
-
-func TestFilterEmojisRespectsLimit(t *testing.T) {
-	t.Parallel()
-
-	// "a" will match a lot of shortcodes; the filter must still cap at
-	// emojiSuggestionLimit so Slack doesn't reject the response.
-	got := filterEmojis("a")
+	cat := NewCatalog(nil, time.Minute, discardLogger())
+	got := cat.Filter(t.Context(), "a")
 	if len(got) > emojiSuggestionLimit {
 		t.Errorf("len=%d exceeds limit %d", len(got), emojiSuggestionLimit)
 	}
