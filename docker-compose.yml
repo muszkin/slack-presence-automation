@@ -9,6 +9,7 @@ services:
     env_file: .env
     environment:
       DATABASE_PATH: /data/presence.db
+      TZ: Europe/Warsaw
     volumes:
       - presence-data:/data
 

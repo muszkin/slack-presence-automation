@@ -10,7 +10,7 @@ RUN go mod download
 COPY . .
 
 RUN CGO_ENABLED=0 GOOS=linux \
-    go build -trimpath -ldflags="-s -w" \
+    go build -trimpath -tags timetzdata -ldflags="-s -w" \
     -o /out/presence ./cmd/presence
 
 # Create the data directory owned by the nonroot user so that when Docker

@@ -386,6 +386,31 @@ func TestResolveRuleLowerIDWinsTiesWhenPriorityEqual(t *testing.T) {
 	}
 }
 
+// TestResolveRuleHonoursNowLocation pins the contract that rule matching
+// uses the weekday/hour/minute of now's Location(). The runtime bug it
+// guards: distroless containers default to UTC, so passing time.Now()
+// without a TZ env would evaluate a Warsaw-authored "09:00–10:00" rule
+// against UTC hours and silently never match during the intended window.
+func TestResolveRuleHonoursNowLocation(t *testing.T) {
+	t.Parallel()
+	warsawSummer := time.FixedZone("CEST", 2*3600)
+	instant := time.Date(2026, 4, 17, 7, 30, 0, 0, time.UTC) // Fri 07:30 UTC = 09:30 Warsaw
+	rule := resolver.Rule{
+		ID:          1,
+		DaysOfWeek:  0b00011111,
+		StartMinute: 9 * 60,
+		EndMinute:   10 * 60,
+		StatusEmoji: ":coffee:",
+		Presence:    resolver.PresenceAuto,
+	}
+	if got := resolver.Resolve(instant, nil, nil, []resolver.Rule{rule}, nil); got.Source != resolver.SourceDefault {
+		t.Errorf("UTC instant outside local window should fall through, got source=%q", got.Source)
+	}
+	if got := resolver.Resolve(instant.In(warsawSummer), nil, nil, []resolver.Rule{rule}, nil); got.Source != resolver.SourceSchedule {
+		t.Errorf("same instant in Warsaw location should match, got source=%q", got.Source)
+	}
+}
+
 func TestResolveIsDeterministic(t *testing.T) {
 	t.Parallel()
 
